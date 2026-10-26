@@ -1,0 +1,21 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: |
+          bash -n install.sh
+          bash -n bin/goatcounter-log-monitor
+          find lib -name '*.sh' -exec bash -n {} \;
+      - name: Verify official CLI download
+        run: GC_REAL_INSTALL_RESULT="$RUNNER_TEMP/cli-path" bash tests/test-real-install.sh
+      - name: Integration tests including real CLI against a local API
+        run: GC_REAL_CLI="$(cat "$RUNNER_TEMP/cli-path")" python3 -m unittest discover -s tests -v

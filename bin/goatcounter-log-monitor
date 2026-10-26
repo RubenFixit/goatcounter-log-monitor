@@ -1,0 +1,19 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+set +x
+set +v
+set -euo pipefail
+umask 077
+PROJECT_ROOT=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd -P)
+source "$PROJECT_ROOT/lib/common.sh"
+source "$PROJECT_ROOT/lib/monitor.sh"
+case "${1:---help}" in
+  watch) watch_monitor "${2:-}";;
+  batch) shift; batch_monitor "$@";;
+  status) show_status;;
+  --version|version) cat "$PROJECT_ROOT/VERSION";;
+  --help|-h|help)
+    printf 'Usage: goatcounter-log-monitor {watch NAME|batch NAME [OPTIONS]|status|--version}\n'
+    printf 'Batch options: --dry-run, --from YYYY-MM-DD, --before YYYY-MM-DD, --yes\n';;
+  *) die 'Unknown command; use --help.';;
+esac

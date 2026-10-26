@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+import os, pathlib, sys
+r=pathlib.Path(os.environ['GC_TEST_ROOT'])
+a=sys.argv[1:]
+urls=[x for x in a if x.startswith('https://')]
+if len(urls)!=1: raise SystemExit('Unexpected request')
+url=urls[0]
+if url=='https://api.github.com/repos/arp242/goatcounter/releases/latest':
+    sys.stdout.buffer.write((r/'release.json').read_bytes())
+elif url=='https://github.com/arp242/goatcounter/releases/download/v2.7.0/goatcounter-v2.7.0-linux-amd64.gz':
+    pathlib.Path(a[a.index('-o')+1]).write_bytes((r/'download.gz').read_bytes())
+elif url=='https://logs.example.test/api/v0/test':
+    assert a[a.index('--data')+1]=='{"perm":2}'
+    header=next(x[1:] for x in a if x.startswith('@'))
+    secret=pathlib.Path(header).read_text()
+    print('403' if 'BAD-KEY' in secret else '200', end='')
+else:
+    raise SystemExit('Unexpected network URL: '+url)

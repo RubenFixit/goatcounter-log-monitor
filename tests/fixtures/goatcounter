@@ -1,0 +1,17 @@
+#!/bin/bash
+set -eu
+case "$1" in
+  version) echo 'GoatCounter v2.7.0 (test fixture)' ;;
+  import)
+    printf '%s\0' "$@" > "$GC_TEST_CAPTURE"
+    [[ -n "$GOATCOUNTER_API_KEY" ]] || exit 9
+    if [[ " $* " != *' -follow '* ]]; then
+      printf 'call\n' >> "$GC_TEST_CALLS"
+      cat "${!#}" >> "$GC_TEST_CONTENTS"
+      [[ "${GC_TEST_DIAGNOSTIC:-0}" == 0 ]] || echo 'simulated partial upload warning' >&2
+      [[ "${GC_TEST_FAIL:-0}" == 0 ]] || exit 7
+    fi
+    sleep "${GC_TEST_SLEEP:-0}"
+    ;;
+  *) exit 8 ;;
+esac
