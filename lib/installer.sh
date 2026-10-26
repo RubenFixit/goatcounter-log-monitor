@@ -264,13 +264,13 @@ main() {
   (( ${#MONITORS[@]} > 0 )) || die 'No monitors saved; no cron jobs changed.'
   printf '\nRecommended first step: run one batch BEFORE starting a watcher or enabling cron.\n'
   for id in "${MONITORS[@]}"; do
-    printf '  %q batch %q --include-current\n' "$RUNNER" "$id"
+    printf '  %q batch %q\n' "$RUNNER" "$id"
   done
   printf 'This imports existing rotated logs and a snapshot of today\047s access.log.\n'
   setup_cron
   unset LAST_TOKEN
   printf '\nDone. Check status with: %q status\n' "$RUNNER"
   printf 'Private diagnostic logs: %s/<monitor>.log\n' "$STATE_DIR"
-  printf 'Recommended initial batch (before any watcher): %q batch %s --include-current\n' "$RUNNER" "${MONITORS[0]}"
+  printf 'Recommended initial batch (before any watcher): %q batch %s\n' "$RUNNER" "${MONITORS[0]}"
   printf 'Verify collection after the first nightly log rotation. No gap recovery is provided.\n'
 }

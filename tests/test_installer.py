@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Linux integration tests. Fake downloads, keys, CLI, and crontab; no network."""
 import gzip
+import datetime as dt
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -155,7 +156,7 @@ class InstallerTests(unittest.TestCase):
         (self.root/(self.log.name+'.0')).symlink_to(self.log.name+'.2026-10-25')
         (self.root/(self.log.name+'.2026-10-24.gz')).write_bytes(gzip.compress(b'previous\n'))
         (self.root/'error.log.2026-10-25').write_text('not access data')
-        self.log.write_text('active log must not be imported\n')
+        self.log.write_text('')
 
     def batch(self, flags='', env=None):
         return subprocess.run(['bash', '-c', self.harness+'batch_monitor blog-https '+flags],
@@ -170,7 +171,8 @@ class InstallerTests(unittest.TestCase):
         inputs[5:6] = ['custom', '', '']
         result = self.wizard(inputs)
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
-        self.assertIn('batch blog-https --include-current', result.stdout)
+        self.assertIn('batch blog-https\n', result.stdout)
+        self.assertNotIn('--include-current', result.stdout)
         self.assertIn('BEFORE starting a watcher', result.stdout)
         result = subprocess.run(['bash', '-c', self.harness+'watch_monitor blog-https'],
                                 env=self.env, capture_output=True, timeout=5)
@@ -182,25 +184,37 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual([arg for arg in args if arg.startswith(b'-exclude=')], [b'-exclude=path:re:a^'])
         self.assertNotIn(b'-silent', args)
 
-    def test_batch_include_current_passes_snapshot_unchanged_and_skips_repeat(self):
+    def test_batch_includes_current_by_default_and_skips_unchanged_repeat(self):
         self.batch_fixture()
         self.log.write_bytes(b'current log with partial last line')
-        result = self.batch('--include-current --yes')
+        result = self.batch('--yes')
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertEqual((self.root/'calls').read_text().count('call'), 4)
         self.assertEqual((self.root/'contents').read_bytes(), b'older\nprevious\nyesterday\ncurrent log with partial last line')
-        result = self.batch('--include-current --yes')
+        result = self.batch('--yes')
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertEqual((self.root/'calls').read_text().count('call'), 4)
 
-    def test_batch_include_current_also_works_without_archives(self):
+    def test_batch_current_only_works_without_archives(self):
         result = self.wizard(self.inputs())
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.log.write_bytes(b'today\n')
-        result = self.batch('--include-current --before 2000-01-01 --yes')
+        result = self.batch('--yes')
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertEqual((self.root/'contents').read_bytes(), b'today\n')
-        self.assertIn('Date bounds apply only to archives', result.stdout)
+        self.assertIn('Current log included', result.stdout)
+
+    def test_batch_date_bounds_select_current_using_server_date(self):
+        result = self.wizard(self.inputs())
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.log.write_bytes(b'today\n')
+        today = dt.date.today().isoformat()
+        result = self.batch(f'--before {today} --yes')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertFalse((self.root/'calls').exists())
+        result = self.batch(f'--from {today} --yes')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual((self.root/'contents').read_bytes(), b'today\n')
 
     def test_stop_watcher_releases_lock_for_batch_and_can_repeat(self):
         self.batch_fixture()
@@ -364,6 +378,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_inspect_never_uses_destination_or_real_token(self):
         self.batch_fixture()
+        self.log.write_bytes(b'fixture log\n')
         result = subprocess.run(['bash', '-c', self.harness+'inspect_monitor blog-https'],
                                 env=self.env, cwd=self.root, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)

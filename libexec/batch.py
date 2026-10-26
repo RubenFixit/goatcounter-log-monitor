@@ -16,12 +16,11 @@ import tempfile
 state, monitor, active, site, binary = sys.argv[1:6]
 separator = sys.argv.index('--', 6)
 cli_args = sys.argv[6:separator]
-parser = argparse.ArgumentParser(description='Pass rotated logs, and optionally the current log, to the GoatCounter CLI.')
+parser = argparse.ArgumentParser(description='Pass rotated logs and the current access log to the GoatCounter CLI.')
 parser.add_argument('--dry-run', action='store_true', help='Preview selections without uploading or writing receipts.')
 parser.add_argument('--yes', action='store_true', help='Confirm upload without prompting (does not bypass receipts).')
-parser.add_argument('--include-current', action='store_true', help='Also import a bounded snapshot of the configured current access log, after archives. Date bounds apply only to archives.')
-parser.add_argument('--from', dest='start', type=dt.date.fromisoformat, metavar='YYYY-MM-DD', help='Include dated archives on/after this date.')
-parser.add_argument('--before', type=dt.date.fromisoformat, metavar='YYYY-MM-DD', help='Include dated archives strictly before this date.')
+parser.add_argument('--from', dest='start', type=dt.date.fromisoformat, metavar='YYYY-MM-DD', help='Include logs on/after this date; current log uses the server date.')
+parser.add_argument('--before', type=dt.date.fromisoformat, metavar='YYYY-MM-DD', help='Include logs strictly before this date; current log uses the server date.')
 args = parser.parse_args(sys.argv[separator+1:])
 if args.start and args.before and args.start >= args.before:
     parser.error('--from must precede --before')
@@ -74,24 +73,20 @@ for p in active.parent.iterdir():
         continue
     order = (archive_date.toordinal(), 0) if archive_date else (dt.datetime.fromtimestamp(p.stat().st_mtime).date().toordinal(), -int(match.group('number')))
     candidates.append((order, p))
-if args.include_current:
+today = dt.date.today()
+include_current = (not args.start or today >= args.start) and (not args.before or today < args.before)
+if include_current:
     if not active.is_file() or active.is_symlink():
         raise SystemExit('The current access log must be an accessible regular file, not a symlink.')
     candidates.append(((dt.date.max.toordinal(), 0), active))
 candidates.sort(key=lambda pair: (pair[0], pair[1].name))
 if not candidates:
-    print('No matching logs. Use --include-current to also import the current access log.')
+    print('No matching logs within the requested date range.')
     raise SystemExit(0)
 
-print(f'Monitor: {monitor}\nDestination: {site}\nCurrent log {"included" if args.include_current else "excluded"}: {active.name}')
-if args.include_current:
-    print('The current log is snapshotted once. Reimporting it after it grows, or later importing its rotated copy, can duplicate earlier records. Date bounds apply only to archives.')
-started = state / f'{monitor}.watch-started'
-if started.exists():
-    print('This monitor has run in live mode since at least ' + started.read_text().strip())
-print('Receipts cannot recognize earlier JavaScript submissions, live-watcher traffic, or imports made outside this batch command.')
-print('Receipts are scoped to the destination and CLI arguments; changing those settings does not skip earlier imports.')
-print('Use --before to keep a backfill separate from dates already collected. Date bounds select archive filenames, not individual log timestamps.')
+print(f'Monitor: {monitor}\nDestination: {site}\nCurrent log {"included" if include_current else "outside date range"}: {active.name}')
+if args.start or args.before:
+    print("Date bounds use archive filenames and today's server date for the current log.")
 
 with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
     pending = []

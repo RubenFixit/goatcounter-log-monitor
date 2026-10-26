@@ -16,6 +16,6 @@ case "${1:---help}" in
   --version|version) cat "$PROJECT_ROOT/VERSION";;
   --help|-h|help)
     printf 'Usage: goatcounter-log-monitor {watch NAME|stop NAME|batch NAME [OPTIONS]|inspect NAME [--file PATH]|status|--version}\n'
-    printf 'Batch options: --dry-run, --include-current, --from YYYY-MM-DD, --before YYYY-MM-DD, --yes\n';;
+    printf 'Batch options: --dry-run, --from YYYY-MM-DD, --before YYYY-MM-DD, --yes\n';;
   *) die 'Unknown command; use --help.';;
 esac

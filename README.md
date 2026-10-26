@@ -56,8 +56,8 @@ An old watcher already in progress is not killed or replaced. After the installe
 For an initial trial, choose **manual** startup. **Run one batch before starting the watcher or enabling cron**, including today's current log:
 
 ```bash
-~/.local/bin/goatcounter-log-monitor batch example-https --include-current --dry-run
-~/.local/bin/goatcounter-log-monitor batch example-https --include-current
+~/.local/bin/goatcounter-log-monitor batch example-https --dry-run
+~/.local/bin/goatcounter-log-monitor batch example-https
 ```
 
 Check the CLI output and dashboard, then start your named monitor in the foreground:
@@ -93,7 +93,7 @@ cat ~/.local/state/goatcounter-log-monitor/cron-suggestions.txt
 
 For other hosts, **crontab** mode can install five-minute checks after confirmation. It preserves existing jobs, saves a backup, and rejects duplicate monitor markers. Do not mix direct crontab edits with DreamHost's panel service: panel updates can overwrite them. Removing a cron entry prevents future starts but does not terminate an existing importer.
 
-## Batch upload: rotated logs and optional current log
+## Batch upload: rotated logs and current log
 
 Stop that monitor's watcher before running a batch. Preview first:
 
@@ -112,9 +112,9 @@ Stop that monitor's watcher before running a batch. Preview first:
 
 The CLI already reads individual gzip files but accepts only one filename per invocation. The batch helper handles selection, private snapshots, decompression, receipts, and one CLI invocation per unique file. It reuses the saved site, token, log format, datetime format, and debug setting.
 
-For `access.log`, discovery includes `access.log.2026-10-24`, `access.log.2026-10-19.gz`, `access.log.1`, and `access.log.2.gz`. It skips symlinks such as DreamHost's `access.log.0`, unrelated files/directories, and the active `access.log`. Date-named archives are chronological; numbered archives use modification day and descending rotation number. Date bounds select archive filenames rather than timestamps inside individual records. Undated numbered archives are skipped when date bounds are supplied. Default selection has no date bounds.
+For `access.log`, discovery includes `access.log.2026-10-24`, `access.log.2026-10-19.gz`, `access.log.1`, `access.log.2.gz`, and the active `access.log`. It skips symlinks such as DreamHost's `access.log.0` and unrelated files/directories. Date-named archives are chronological; numbered archives use modification day and descending rotation number. The current log is imported last. Date bounds select archive filenames and use today's server date for the current log; they do not filter timestamps inside individual records. Undated numbered archives are skipped when date bounds are supplied. Default selection has no date bounds.
 
-Use `--include-current` to also import a snapshot of the configured `access.log`, after the archives. It copies at most the file size observed when that file is opened, so ongoing writes cannot make the upload run indefinitely. Log bytes, including any incomplete final line, are passed unchanged to GoatCounter. Date bounds apply only to archives; `--include-current` explicitly includes the current file regardless of those bounds. Identical snapshots are skipped by receipts, but a growing current file or its later rotated copy can overlap earlier submissions. Use this option once for initial history, then let the watcher collect new lines. There is no automatic handoff: requests written between the snapshot and watcher startup can be missed.
+Batch includes a snapshot of the configured current log by default. It copies at most the file size observed when that file is opened, so ongoing writes cannot make the upload run indefinitely. Log bytes, including any incomplete final line, are passed unchanged to GoatCounter. There is no automatic handoff: requests written between the snapshot and watcher startup can be missed.
 
 All selected archives are snapshotted and gzip integrity is checked before uploading. Corrupt or changing archives stop the batch before uploads begin. Allow disk space roughly equal to the selected uncompressed archives. The monitor lock blocks cron starts of that same monitor during a batch; another running watcher makes the batch refuse to start. A destination/filter-scope lock prevents concurrent batches sharing receipts.
 
@@ -122,11 +122,11 @@ Batch passes each selected file to the GoatCounter CLI, decompressing `.gz` file
 
 SHA-256 receipts under `~/.local/state/goatcounter-log-monitor/batches/` skip completed identical payloads, including plain/gzip copies. Changed dated archives are rejected rather than replayed. Keep the receipts: deleting them, changing destination or CLI arguments, or moving to an unrelated state directory can defeat repeat-import protection. These are **file-level receipts, not event-level deduplication**; distinct files can still contain overlapping requests. Existing receipts are retained. Version 0.2.4 changes the CLI arguments and therefore uses a new receipt scope; previous imports are not automatically skipped under the new settings.
 
-Receipts cannot recognize earlier watcher traffic, JavaScript submissions, or imports performed with another tool. **Choose a `--before` boundary that excludes previously collected dates, or use a fresh analytics site.** Stopping a watcher does not remove its past submissions.
+Receipts belong only to batch; watch uses GoatCounter's `-follow` mode and neither reads nor writes them. Receipts skip unchanged files but do not track individual entries shared with watcher traffic, JavaScript submissions, or direct CLI imports. GoatCounter handles session counting on the server.
 
 Receipts are marked `in-progress` before submission, then `complete` when the CLI exits zero. Output alone does not change that result. A completed receipt records the CLI exit status; it does not verify that pageviews appeared in the dashboard. A nonzero CLI exit stops the batch and is returned to the caller; an interruption or failed import prevents automatic retries. Review GoatCounter's output before deciding what to resubmit. There is no rollback or exactly-once guarantee. Deleting an uncertain receipt and rerunning may duplicate accepted hits.
 
-`--dry-run` sends no pageviews and writes no receipts, although it uses locks and temporary snapshots. `--yes` skips only interactive confirmation, not locks or uncertain-receipt checks. The active log is excluded unless `--include-current` is supplied. This utility does not automatically bridge the end of batch history into live collection or recover gaps.
+`--dry-run` sends no pageviews and writes no receipts, although it uses locks and temporary snapshots. `--yes` skips only interactive confirmation, not locks or uncertain-receipt checks. This utility does not automatically bridge the end of batch history into live collection or recover gaps.
 
 ## Log format and CLI diagnostics
 

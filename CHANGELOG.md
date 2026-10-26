@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5
+
+- Include the current access log in every batch by default and remove `--include-current`. Date bounds use today's server date to select the current file; it is uploaded after matching archives.
+- Simplify installer examples to `batch NAME` before starting watch. Clarify that receipts belong only to batch and are not used by watch.
+- Remove repetitive batch warning banners; retain CLI diagnostics and file-selection output.
+
 ## 0.2.4
 
 - Remove all hardcoded record filtering from watch and batch, and disable the CLI's implicit static/redirect exclusions with a never-matching expression.
