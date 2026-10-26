@@ -4,12 +4,17 @@ load_monitor() {
   valid_name "$id" || die 'Specify a valid monitor name.'
   config="$CONFIG_DIR/$id.conf"
   [[ -f "$config" && ! -L "$config" && -O "$config" ]] || die "Missing or unsafe monitor configuration: $id"
+  LOG_DATETIME=''
+  LOG_DEBUG=import-api
   source "$config"
   [[ -x "$BINARY" ]] || die 'Configured CLI is unavailable.'
   export GOATCOUNTER_API_KEY
-  IMPORT_ARGS=(import -silent -format="$LOG_FORMAT"
-    -exclude=static -exclude=redirect -exclude='!method:GET' -exclude='!status:200'
-    -exclude='path:re:\.(woff2?|ttf|otf|eot|map)(\?.*)?$' -site="$GOATCOUNTER_SITE")
+  export GOATCOUNTER_SILENT=''
+  # v2.7.0 rejects -exclude=''. A regex that can never match disables the
+  # CLI's implicit static/redirect exclusions without discarding any records.
+  IMPORT_ARGS=(import -format="$LOG_FORMAT" -exclude='path:re:a^' -site="$GOATCOUNTER_SITE")
+  [[ -z "$LOG_DATETIME" ]] || IMPORT_ARGS+=(-datetime="$LOG_DATETIME")
+  [[ -z "$LOG_DEBUG" ]] || IMPORT_ARGS+=(-debug="$LOG_DEBUG")
 }
 
 watch_monitor() {

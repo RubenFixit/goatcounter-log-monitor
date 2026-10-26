@@ -53,7 +53,14 @@ An old watcher already in progress is not killed or replaced. After the installe
 
 ## First test and cron startup
 
-For an initial trial, choose **manual** startup, then run your named monitor in the foreground:
+For an initial trial, choose **manual** startup. **Run one batch before starting the watcher or enabling cron**, including today's current log:
+
+```bash
+~/.local/bin/goatcounter-log-monitor batch example-https --include-current --dry-run
+~/.local/bin/goatcounter-log-monitor batch example-https --include-current
+```
+
+Check the CLI output and dashboard, then start your named monitor in the foreground:
 
 ```bash
 ~/.local/bin/goatcounter-log-monitor watch example-https
@@ -86,7 +93,7 @@ cat ~/.local/state/goatcounter-log-monitor/cron-suggestions.txt
 
 For other hosts, **crontab** mode can install five-minute checks after confirmation. It preserves existing jobs, saves a backup, and rejects duplicate monitor markers. Do not mix direct crontab edits with DreamHost's panel service: panel updates can overwrite them. Removing a cron entry prevents future starts but does not terminate an existing importer.
 
-## Batch upload: finalized rotated logs
+## Batch upload: rotated logs and optional current log
 
 Stop that monitor's watcher before running a batch. Preview first:
 
@@ -103,25 +110,39 @@ Stop that monitor's watcher before running a batch. Preview first:
   --from 2026-10-19 --before 2026-10-26
 ```
 
-The CLI already reads individual gzip files but accepts only one filename per invocation. The batch helper handles selection, private snapshots, decompression, receipts, and one CLI invocation per unique archive. It reuses the saved site, token, log format, and filters.
+The CLI already reads individual gzip files but accepts only one filename per invocation. The batch helper handles selection, private snapshots, decompression, receipts, and one CLI invocation per unique file. It reuses the saved site, token, log format, datetime format, and debug setting.
 
 For `access.log`, discovery includes `access.log.2026-10-24`, `access.log.2026-10-19.gz`, `access.log.1`, and `access.log.2.gz`. It skips symlinks such as DreamHost's `access.log.0`, unrelated files/directories, and the active `access.log`. Date-named archives are chronological; numbered archives use modification day and descending rotation number. Date bounds select archive filenames rather than timestamps inside individual records. Undated numbered archives are skipped when date bounds are supplied. Default selection has no date bounds.
 
+Use `--include-current` to also import a snapshot of the configured `access.log`, after the archives. It copies at most the file size observed when that file is opened, so ongoing writes cannot make the upload run indefinitely. Log bytes, including any incomplete final line, are passed unchanged to GoatCounter. Date bounds apply only to archives; `--include-current` explicitly includes the current file regardless of those bounds. Identical snapshots are skipped by receipts, but a growing current file or its later rotated copy can overlap earlier submissions. Use this option once for initial history, then let the watcher collect new lines. There is no automatic handoff: requests written between the snapshot and watcher startup can be missed.
+
 All selected archives are snapshotted and gzip integrity is checked before uploading. Corrupt or changing archives stop the batch before uploads begin. Allow disk space roughly equal to the selected uncompressed archives. The monitor lock blocks cron starts of that same monitor during a batch; another running watcher makes the batch refuse to start. A destination/filter-scope lock prevents concurrent batches sharing receipts.
 
-Batch passes each selected archive to the GoatCounter CLI, decompressing `.gz` files into temporary plain files first. It does not preflight, parse, or rewrite log entries. GoatCounter handles the configured format and filters, and its normal output and errors appear directly in the terminal.
+Batch passes each selected file to the GoatCounter CLI, decompressing `.gz` files into temporary plain files first. It does not preflight, parse, or rewrite log entries. Neither watch nor batch excludes GETs, HEADs, redirects, static files, or non-200 responses. To disable GoatCounter v2.7.0's default static/redirect exclusions, both pass `-exclude=path:re:a^`, an expression that can never match; this release rejects the documented empty exclusion. The server can still classify bots or reject invalid records. CLI output and errors appear directly in the terminal for batch and in the private monitor log for watch. API request debugging is enabled by default.
 
-SHA-256 receipts under `~/.local/state/goatcounter-log-monitor/batches/` skip completed identical payloads, including plain/gzip copies. Changed dated archives are rejected rather than replayed. Keep the receipts: deleting them, changing destination/filter settings, or moving to an unrelated state directory can defeat repeat-import protection. These are **file-level receipts, not event-level deduplication**; distinct archives can still contain overlapping requests. Existing receipts remain compatible with updates.
+SHA-256 receipts under `~/.local/state/goatcounter-log-monitor/batches/` skip completed identical payloads, including plain/gzip copies. Changed dated archives are rejected rather than replayed. Keep the receipts: deleting them, changing destination or CLI arguments, or moving to an unrelated state directory can defeat repeat-import protection. These are **file-level receipts, not event-level deduplication**; distinct files can still contain overlapping requests. Existing receipts are retained. Version 0.2.4 changes the CLI arguments and therefore uses a new receipt scope; previous imports are not automatically skipped under the new settings.
 
 Receipts cannot recognize earlier watcher traffic, JavaScript submissions, or imports performed with another tool. **Choose a `--before` boundary that excludes previously collected dates, or use a fresh analytics site.** Stopping a watcher does not remove its past submissions.
 
 Receipts are marked `in-progress` before submission, then `complete` when the CLI exits zero. Output alone does not change that result. A completed receipt records the CLI exit status; it does not verify that pageviews appeared in the dashboard. A nonzero CLI exit stops the batch and is returned to the caller; an interruption or failed import prevents automatic retries. Review GoatCounter's output before deciding what to resubmit. There is no rollback or exactly-once guarantee. Deleting an uncertain receipt and rerunning may duplicate accepted hits.
 
-`--dry-run` sends no pageviews and writes no receipts, although it uses locks and temporary snapshots. `--yes` skips only interactive confirmation, not locks or uncertain-receipt checks. The active log is intentionally excluded because repeatedly uploading a growing file would replay its old prefix. This utility does not automatically bridge the end of batch history into live collection or recover gaps.
+`--dry-run` sends no pageviews and writes no receipts, although it uses locks and temporary snapshots. `--yes` skips only interactive confirmation, not locks or uncertain-receipt checks. The active log is excluded unless `--include-current` is supplied. This utility does not automatically bridge the end of batch history into live collection or recover gaps.
+
+## Log format and CLI diagnostics
+
+The installer accepts a native log-format name or `custom`. For DreamHost combined logs with trailing spaces, choose `custom` and accept the format and datetime defaults. Existing monitors can use the same values in their private configuration:
+
+```bash
+LOG_FORMAT='log:$remote_addr $ignore [$datetime] "$method $path $http" $status $size "$referrer" "$user_agent"$ignore'
+LOG_DATETIME='02/Jan/2006:15:04:05 -0700'
+LOG_DEBUG=import-api
+```
+
+The settings are passed unchanged to the CLI. `LOG_DATETIME` defaults to empty for native predefined formats. `LOG_DEBUG` defaults to `import-api`; set it to an empty string to disable debug messages while retaining normal CLI errors. Silent mode is disabled in both watch and batch. Stop and restart an existing watcher to apply new settings.
 
 ## Troubleshoot a batch with no dashboard data
 
-Imported records keep their original timestamps: check the archive's date range, not only today's dashboard. A clean CLI exit or a receipt marked `complete` does not prove that GoatCounter displayed visits; records might have been excluded locally or accepted and then classified as bots by the server. Do not delete receipts and replay a batch just because the dashboard is empty.
+Imported records keep their original timestamps: check the archive's date range, not only today's dashboard. A clean CLI exit or a receipt marked `complete` does not prove that GoatCounter displayed visits; records might have failed parsing, been rejected, or been classified as bots by the server. Do not delete receipts and replay a batch just because the dashboard is empty.
 
 Inspect an archive that was already uploaded without resubmitting it:
 
@@ -130,9 +151,9 @@ Inspect an archive that was already uploaded without resubmitting it:
   --file "$HOME/logs/example.com/https/access.log.2026-10-25"
 ```
 
-Omit `--file` to inspect a bounded snapshot of the configured active log, or select a `.gz` archive. Inspection does not acquire the watcher lock or change batch receipts. It substitutes a synthetic key and local API, then reports candidate counts for format-only, GET-only, HTTP-200-only, and all configured filters. It also reports the candidate date span and a heuristic count of common bot User-Agent signatures. It does not print request URLs, IPs, or raw User-Agent values. CLI diagnostics, if present, are retained only in private state files; those files may contain log details and should not be posted unredacted.
+Omit `--file` to inspect a bounded snapshot of the configured active log, or select a `.gz` archive. Inspection does not acquire the watcher lock or change batch receipts. It substitutes a synthetic key and local API, then reports candidate counts for format-only, hypothetical GET-only and HTTP-200-only filters, and the configured import settings. Those comparison filters are used only by this optional inspection command. It also reports the candidate date span and a heuristic count of common bot User-Agent signatures. It does not print request URLs, IPs, or raw User-Agent values. CLI diagnostics, if present, are retained only in private state files; those files may contain log details and should not be posted unredacted.
 
-If the full filter count is zero, investigate the format/filters before another upload. If candidates are present, check dates and bot hints and investigate server-side processing. Bot hints are not GoatCounter's own classification; inspection cannot query the real dashboard and needs no extra API permission. `combined` supports complete Apache entries with `HTTP/2.0`, IPv4, and IPv6; truncated or differently formatted lines can fail parsing.
+If the configured candidate count is zero or parsed records are invalid, investigate the format before another upload. If valid candidates are present, check dates and bot hints and investigate server-side processing. Bot hints are not GoatCounter's own classification; inspection cannot query the real dashboard and needs no extra API permission. The strict `combined` format supports Apache entries with `HTTP/2.0`, IPv4, and IPv6, but trailing spaces can prevent parsing. Use the custom format above for DreamHost logs with trailing spaces.
 
 ## Files and privacy
 
@@ -158,7 +179,7 @@ Diagnostics live in `~/.local/state/goatcounter-log-monitor/<name>.log`. Logs ov
 ## Measurement limits
 
 - The watcher collects new lines only. Downtime, API failures, crashes, and rotation edge cases can lose data. Historical import is explicit. Verify live collection after the first nightly rotation on your hosting server.
-- Only HTTP 200 GET requests are included; redirects, common static files, and font/source-map extensions are excluded. Feeds, APIs, unusual assets, bots, and your own requests may need more filtering.
+- All parsed entries are submitted without local exclusions. This includes HEAD requests, redirects, static files, error responses, and your own requests. GoatCounter's server-side processing and bot classification still apply.
 - Parsed records can send IP addresses and User-Agent values to GoatCounter for location, bot detection, and session processing. A CDN must preserve actual visitor addresses in origin logs for useful results.
 - Prefetching can fetch pages never viewed; browser/CDN caches can avoid origin requests. Log counts and JavaScript counts measure different things.
 - Log-derived data lacks screen sizes and page titles. Query strings and canonical paths are not normalized by this utility.

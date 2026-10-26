@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4
+
+- Remove all hardcoded record filtering from watch and batch, and disable the CLI's implicit static/redirect exclusions with a never-matching expression.
+- Support native custom `LOG_FORMAT` and `LOG_DATETIME` settings, including the verified DreamHost format accepting trailing characters. The installer offers these through its custom-format prompts.
+- Remove silent mode from watch, enable configurable `import-api` debugging by default, and describe batch results as CLI exit status rather than verified uploads.
+- Add `batch --include-current` for a bounded snapshot of the current access log, imported after archives. Recommend a single initial batch before enabling a watcher or cron; document repeat-import overlap and the startup gap.
+- Preserve existing receipts, but changed CLI arguments use a new receipt scope. Previous imports may overlap a new batch and are not automatically skipped.
+
 ## 0.2.3
 
 - Add `stop NAME` to terminate the matching watcher and wait for its monitor lock to be released. This also works with watchers started before this update; active batches are left running.

@@ -73,7 +73,7 @@ cron_command() {
 }
 
 configure_monitor() {
-  local id site token log_path format staged reuse
+  local id site token log_path format datetime='' staged reuse
   while :; do
     id=$(prompt 'Monitor name (lowercase letters, digits, hyphen, underscore)') || exit 1
     valid_name "$id" || { printf 'Use 1–48 characters; start with a letter or digit.\n' >&2; continue; }
@@ -105,8 +105,16 @@ configure_monitor() {
     printf 'Choose an existing readable log file using an absolute path (no %% or line breaks).\n' >&2
   done
   while :; do
-    format=$(prompt 'Log format: combined, combined-vhost, common, common-vhost, caddy, bunny' combined) || exit 1
-    case "$format" in combined|combined-vhost|common|common-vhost|caddy|bunny) break;; esac
+    printf 'For DreamHost combined logs with trailing spaces, choose custom.\n' >&2
+    format=$(prompt 'Log format: combined, combined-vhost, common, common-vhost, caddy, bunny, custom' combined) || exit 1
+    case "$format" in
+      custom)
+        format=$(prompt 'Custom log: format' 'log:$remote_addr $ignore [$datetime] "$method $path $http" $status $size "$referrer" "$user_agent"$ignore') || exit 1
+        [[ "$format" == log:* ]] || { printf 'Custom formats must start with log:.\n' >&2; continue; }
+        datetime=$(prompt 'Datetime format' '02/Jan/2006:15:04:05 -0700') || exit 1
+        break;;
+      combined|combined-vhost|common|common-vhost|caddy|bunny) break;;
+    esac
   done
   printf '\nMonitor: %s\nSite: %s\nLog: %s\nFormat: %s\n' "$id" "$site" "$log_path" "$format"
   yes 'Save this monitor?' y || return 0
@@ -118,6 +126,8 @@ configure_monitor() {
     printf 'GOATCOUNTER_API_KEY=%q\n' "$token"
     printf 'LOG_FILE=%q\n' "$log_path"
     printf 'LOG_FORMAT=%q\n' "$format"
+    printf 'LOG_DATETIME=%q\n' "$datetime"
+    printf 'LOG_DEBUG=import-api\n'
   } > "$staged"
   chmod 600 "$staged"
   mv -- "$staged" "$CONFIG_DIR/$id.conf"
@@ -252,10 +262,15 @@ main() {
     yes 'Add another monitor (another log or site)?' n || break
   done
   (( ${#MONITORS[@]} > 0 )) || die 'No monitors saved; no cron jobs changed.'
+  printf '\nRecommended first step: run one batch BEFORE starting a watcher or enabling cron.\n'
+  for id in "${MONITORS[@]}"; do
+    printf '  %q batch %q --include-current\n' "$RUNNER" "$id"
+  done
+  printf 'This imports existing rotated logs and a snapshot of today\047s access.log.\n'
   setup_cron
   unset LAST_TOKEN
   printf '\nDone. Check status with: %q status\n' "$RUNNER"
   printf 'Private diagnostic logs: %s/<monitor>.log\n' "$STATE_DIR"
-  printf 'Optional archive backfill (stop this monitor first): %q batch %s --dry-run\n' "$RUNNER" "${MONITORS[0]}"
+  printf 'Recommended initial batch (before any watcher): %q batch %s --include-current\n' "$RUNNER" "${MONITORS[0]}"
   printf 'Verify collection after the first nightly log rotation. No gap recovery is provided.\n'
 }

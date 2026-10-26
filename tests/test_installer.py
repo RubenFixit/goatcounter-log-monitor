@@ -21,6 +21,7 @@ import unittest
 
 INSTALLER = Path(__file__).resolve().parents[1] / 'install.sh'
 FAKE_CLI = (Path(__file__).with_name('fixtures') / 'goatcounter').read_bytes()
+CUSTOM_FORMAT = 'log:$remote_addr $ignore [$datetime] "$method $path $http" $status $size "$referrer" "$user_agent"$ignore'
 
 
 class InstallerTests(unittest.TestCase):
@@ -164,6 +165,43 @@ class InstallerTests(unittest.TestCase):
     def receipt(self):
         return next((self.state/'batches').glob('*/receipts.json'))
 
+    def test_custom_format_is_saved_and_passed_to_watcher_without_filters(self):
+        inputs = self.inputs()
+        inputs[5:6] = ['custom', '', '']
+        result = self.wizard(inputs)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('batch blog-https --include-current', result.stdout)
+        self.assertIn('BEFORE starting a watcher', result.stdout)
+        result = subprocess.run(['bash', '-c', self.harness+'watch_monitor blog-https'],
+                                env=self.env, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = (self.root/'arguments').read_bytes().split(b'\0')
+        self.assertIn(os.fsencode('-format='+CUSTOM_FORMAT), args)
+        self.assertIn(b'-datetime=02/Jan/2006:15:04:05 -0700', args)
+        self.assertIn(b'-debug=import-api', args)
+        self.assertEqual([arg for arg in args if arg.startswith(b'-exclude=')], [b'-exclude=path:re:a^'])
+        self.assertNotIn(b'-silent', args)
+
+    def test_batch_include_current_passes_snapshot_unchanged_and_skips_repeat(self):
+        self.batch_fixture()
+        self.log.write_bytes(b'current log with partial last line')
+        result = self.batch('--include-current --yes')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual((self.root/'calls').read_text().count('call'), 4)
+        self.assertEqual((self.root/'contents').read_bytes(), b'older\nprevious\nyesterday\ncurrent log with partial last line')
+        result = self.batch('--include-current --yes')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual((self.root/'calls').read_text().count('call'), 4)
+
+    def test_batch_include_current_also_works_without_archives(self):
+        result = self.wizard(self.inputs())
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.log.write_bytes(b'today\n')
+        result = self.batch('--include-current --before 2000-01-01 --yes')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual((self.root/'contents').read_bytes(), b'today\n')
+        self.assertIn('Date bounds apply only to archives', result.stdout)
+
     def test_stop_watcher_releases_lock_for_batch_and_can_repeat(self):
         self.batch_fixture()
         watcher = subprocess.Popen(['bash', '-c', self.harness+'watch_monitor blog-https'],
@@ -206,7 +244,7 @@ class InstallerTests(unittest.TestCase):
         self.batch_fixture()
         result = self.batch('--dry-run')
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
-        self.assertIn('3 unique archives', result.stdout)
+        self.assertIn('3 unique files', result.stdout)
         self.assertNotIn(self.log.name+'.0 (', result.stdout)
         self.assertFalse((self.root/'calls').exists())
         self.assertEqual(list((self.state/'batches').glob('*/receipts.json')), [])
@@ -330,7 +368,7 @@ class InstallerTests(unittest.TestCase):
                                 env=self.env, cwd=self.root, text=True, capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertIn('Read-only inspection', result.stdout)
-        self.assertIn('Configured import filters: 1 candidate', result.stdout)
+        self.assertIn('Configured import settings: 1 candidate', result.stdout)
         self.assertNotIn(self.token, result.stdout+result.stderr)
         self.assertFalse((self.root/'calls').exists())
         self.assertFalse((self.state/'batches').exists())
@@ -347,8 +385,8 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('Format only (no exclusions): 7 candidate records', result.stdout)
         self.assertIn('GET requests only: 6 candidate records', result.stdout)
         self.assertIn('HTTP 200 only: 5 candidate records', result.stdout)
-        self.assertIn('Configured import filters: 3 candidate records', result.stdout)
-        self.assertIn('User-Agent hints among eligible records: 2/3', result.stdout)
+        self.assertIn('Configured import settings: 7 candidate records', result.stdout)
+        self.assertIn('User-Agent hints among eligible records: 4/7', result.stdout)
         self.assertFalse((self.root/'calls').exists())
 
     def test_batch_refuses_running_watcher(self):
@@ -396,19 +434,57 @@ class InstallerTests(unittest.TestCase):
         with config.open('a') as f:
             f.write('\nBINARY='+shlex.quote(os.environ['GC_REAL_CLI'])+'\n')
             f.write(f'GOATCOUNTER_SITE=http://127.0.0.1:{api.server_port}\n')
+            f.write('LOG_FORMAT='+shlex.quote(CUSTOM_FORMAT)+'\n')
+            f.write("LOG_DATETIME='02/Jan/2006:15:04:05 -0700'\n")
+        expected_paths = []
         for day, path in [('19', '/older'), ('24', '/previous'), ('25', '/yesterday')]:
-            line = f'203.0.113.10 - - [{day}/Oct/2026:10:00:00 +0000] "GET {path} HTTP/1.1" 200 10 "-" "Mozilla/5.0"\n'.encode()
+            lines = []
+            for method, suffix, status in [('GET', '', 200), ('HEAD', '/head', 200), ('GET', '/redirect', 301), ('GET', '/image.png', 404)]:
+                expected_paths.append(path+suffix)
+                lines.append(f'203.0.113.10 - - [{day}/Oct/2026:10:00:00 +0000] "{method} {path+suffix} HTTP/2.0" {status} 10 "-" "Mozilla/5.0" \n')
+            line = ''.join(lines).encode()
             for p in self.root.glob(self.log.name+f'.2026-10-{day}*'):
                 if not p.is_symlink():
                     p.write_bytes(gzip.compress(line) if p.suffix=='.gz' else line)
         try:
             result = self.batch('--yes')
             self.assertEqual(result.returncode, 0, result.stdout+result.stderr+'\n'+str(requests))
-            self.assertEqual([hit['path'] for hit in received], ['/older', '/previous', '/yesterday'])
+            self.assertEqual([hit['path'] for hit in received], expected_paths)
+            self.assertTrue(all(not hit['created_at'].startswith('0001-') for hit in received))
+            self.assertIn('GoatCounter CLI exited 0', result.stdout)
+            self.assertIn('DEBUG import-api', result.stderr+result.stdout)
             self.assertTrue(all(v['status']=='complete' for v in json.loads(self.receipt().read_text()).values()))
             again = self.batch('--yes')
             self.assertEqual(again.returncode, 0, again.stdout+again.stderr)
-            self.assertEqual(len(received), 3)
+            self.assertEqual(len(received), 12)
+            watcher = subprocess.Popen(['bash', '-c', self.harness+'watch_monitor blog-https'], env=self.env)
+            try:
+                for _ in range(100):
+                    descriptors = Path(f'/proc/{watcher.pid}/fd')
+                    if descriptors.exists() and any(
+                        os.path.realpath(fd) == str(self.log) for fd in descriptors.iterdir()
+                    ):
+                        break
+                    time.sleep(.02)
+                else:
+                    self.fail('Native watcher did not open its configured log.')
+                time.sleep(.2)
+                live_paths = []
+                with self.log.open('a') as log:
+                    for index in range(100):
+                        method, status, path = [
+                            ('GET', 200, '/live'), ('HEAD', 200, '/live-head'),
+                            ('GET', 301, '/live-redirect'), ('GET', 404, '/live.png'),
+                        ][index % 4]
+                        live_paths.append(path)
+                        log.write(f'203.0.113.10 - - [26/Oct/2026:10:00:00 +0000] "{method} {path} HTTP/2.0" {status} 10 "-" "Mozilla/5.0" \n')
+                deadline = time.monotonic()+15
+                while len(received) < 112 and time.monotonic() < deadline:
+                    time.sleep(.1)
+                self.assertEqual([hit['path'] for hit in received[12:]], live_paths)
+            finally:
+                watcher.terminate()
+                watcher.wait(timeout=5)
         finally:
             api.shutdown()
             api.server_close()

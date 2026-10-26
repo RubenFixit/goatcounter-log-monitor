@@ -44,12 +44,13 @@ with tempfile.TemporaryDirectory(prefix='.inspect-', dir=state) as temp:
         snapshot.write_bytes(content)
         print('Ignored an incomplete final line.')
     print(f'Snapshot: {len(content)} bytes; {content.count(bytes([10]))} complete lines', flush=True)
+    format_args = [arg for arg in configured_args if arg.startswith(('-format=', '-datetime='))]
     stages = [
         # Use a never-matching pattern: some releases reject an empty exclude.
-        ('Format only (no exclusions)', ['import', '-silent', f'-format={format_name}', '-exclude=path:re:a^']),
-        ('GET requests only', ['import', '-silent', f'-format={format_name}', '-exclude=!method:GET']),
-        ('HTTP 200 only', ['import', '-silent', f'-format={format_name}', '-exclude=!status:200']),
-        ('Configured import filters', configured_args),
+        ('Format only (no exclusions)', ['import', '-silent', *format_args, '-exclude=path:re:a^']),
+        ('GET requests only', ['import', '-silent', *format_args, '-exclude=!method:GET']),
+        ('HTTP 200 only', ['import', '-silent', *format_args, '-exclude=!status:200']),
+        ('Configured import settings', configured_args),
     ]
     summaries = []
     for index, (label, options) in enumerate(stages):

@@ -16,9 +16,10 @@ import tempfile
 state, monitor, active, site, binary = sys.argv[1:6]
 separator = sys.argv.index('--', 6)
 cli_args = sys.argv[6:separator]
-parser = argparse.ArgumentParser(description='Import finalized rotated logs, once per identical payload and destination.')
+parser = argparse.ArgumentParser(description='Pass rotated logs, and optionally the current log, to the GoatCounter CLI.')
 parser.add_argument('--dry-run', action='store_true', help='Preview selections without uploading or writing receipts.')
 parser.add_argument('--yes', action='store_true', help='Confirm upload without prompting (does not bypass receipts).')
+parser.add_argument('--include-current', action='store_true', help='Also import a bounded snapshot of the configured current access log, after archives. Date bounds apply only to archives.')
 parser.add_argument('--from', dest='start', type=dt.date.fromisoformat, metavar='YYYY-MM-DD', help='Include dated archives on/after this date.')
 parser.add_argument('--before', type=dt.date.fromisoformat, metavar='YYYY-MM-DD', help='Include dated archives strictly before this date.')
 args = parser.parse_args(sys.argv[separator+1:])
@@ -29,7 +30,7 @@ state = Path(state)
 active = Path(active)
 if not active.is_absolute() or not active.parent.is_dir():
     raise SystemExit('The configured log directory is unavailable.')
-# The ledger is shared across monitors targeting the same site and filters.
+# The ledger is shared across monitors targeting the same site and CLI arguments.
 # Different binary paths do not create a fresh duplicate-import scope.
 scope = hashlib.sha256(json.dumps([site, cli_args], separators=(',', ':')).encode()).hexdigest()
 receipt_dir = state / 'batches' / scope
@@ -38,7 +39,7 @@ scope_lock = open(receipt_dir / 'lock', 'a')
 try:
     fcntl.flock(scope_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except BlockingIOError:
-    raise SystemExit('Another batch for this site and filter configuration is running.')
+    raise SystemExit('Another batch for this site and CLI configuration is running.')
 ledger_file = receipt_dir / 'receipts.json'
 ledger = json.loads(ledger_file.read_text()) if ledger_file.exists() else {}
 
@@ -73,40 +74,56 @@ for p in active.parent.iterdir():
         continue
     order = (archive_date.toordinal(), 0) if archive_date else (dt.datetime.fromtimestamp(p.stat().st_mtime).date().toordinal(), -int(match.group('number')))
     candidates.append((order, p))
+if args.include_current:
+    if not active.is_file() or active.is_symlink():
+        raise SystemExit('The current access log must be an accessible regular file, not a symlink.')
+    candidates.append(((dt.date.max.toordinal(), 0), active))
 candidates.sort(key=lambda pair: (pair[0], pair[1].name))
 if not candidates:
-    print('No matching finalized archives. The current access log is intentionally excluded.')
+    print('No matching logs. Use --include-current to also import the current access log.')
     raise SystemExit(0)
 
-print(f'Monitor: {monitor}\nDestination: {site}\nCurrent log excluded: {active.name}')
+print(f'Monitor: {monitor}\nDestination: {site}\nCurrent log {"included" if args.include_current else "excluded"}: {active.name}')
+if args.include_current:
+    print('The current log is snapshotted once. Reimporting it after it grows, or later importing its rotated copy, can duplicate earlier records. Date bounds apply only to archives.')
 started = state / f'{monitor}.watch-started'
 if started.exists():
     print('This monitor has run in live mode since at least ' + started.read_text().strip())
 print('Receipts cannot recognize earlier JavaScript submissions, live-watcher traffic, or imports made outside this batch command.')
+print('Receipts are scoped to the destination and CLI arguments; changing those settings does not skip earlier imports.')
 print('Use --before to keep a backfill separate from dates already collected. Date bounds select archive filenames, not individual log timestamps.')
 
 with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
     pending = []
     seen = set()
-    # Validate and snapshot every selected archive BEFORE uploading anything.
+    # Snapshot every selected file BEFORE uploading anything.
     # Gzip is decoded here so plain/gzip copies receive the same content hash.
     for _, source in candidates:
         snapshot = Path(temp) / f'{len(pending)}.log'
-        before = source.stat()
+        is_current = source == active
         digest = hashlib.sha256()
         opener = gzip.open if source.name.endswith('.gz') else open
         try:
             with opener(source, 'rb') as src, open(snapshot, 'wb') as dst:
+                before = os.fstat(src.fileno())
+                remaining = before.st_size if is_current else None
                 while True:
-                    chunk = src.read(1024 * 1024)
+                    if remaining == 0:
+                        break
+                    chunk = src.read(min(1024 * 1024, remaining) if remaining is not None else 1024 * 1024)
                     if not chunk:
                         break
                     digest.update(chunk)
                     dst.write(chunk)
+                    if remaining is not None:
+                        remaining -= len(chunk)
         except (OSError, EOFError) as e:
             raise SystemExit(f'Cannot snapshot {source.name}: {e}. Nothing from this batch was uploaded.')
         after = source.stat()
-        if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
+        changed = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        if is_current:
+            changed = (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino) or after.st_size < before.st_size or remaining != 0
+        if changed:
             raise SystemExit(f'{source.name} changed while being read; no uploads performed. Retry after rotation finishes.')
         identity = digest.hexdigest()
         if snapshot.stat().st_size == 0:
@@ -119,7 +136,7 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
         # Dated archives should be immutable. A changed payload under the same
         # dated name may contain already-uploaded lines plus new lines.
         logical_source = str(source)[:-3] if source.name.endswith('.gz') else str(source)
-        if pattern.fullmatch(source.name).group('date'):
+        if not is_current and pattern.fullmatch(source.name).group('date'):
             for prior_hash, prior in ledger.items():
                 prior_source = prior.get('logical_source', prior.get('source', ''))
                 if prior_source.endswith('.gz'):
@@ -138,14 +155,14 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
         print('Nothing new to upload.')
         raise SystemExit(0)
     if args.dry_run:
-        print(f'Dry run: {len(pending)} unique archives; no uploads and no receipts written.')
+        print(f'Dry run: {len(pending)} unique files; no uploads and no receipts written.')
         raise SystemExit(0)
     if not args.yes:
         # Use the terminal for explicit upload confirmation, including when
         # stdin belongs to a caller or a pipeline.
         try:
             with open('/dev/tty', 'r') as reader, open('/dev/tty', 'w') as writer:
-                writer.write(f'Type IMPORT to upload {len(pending)} archives to {site}: ')
+                writer.write(f'Type IMPORT to upload {len(pending)} files to {site}: ')
                 writer.flush()
                 confirmation = reader.readline().strip()
         except OSError:
@@ -161,10 +178,8 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
         save_ledger()
         print(f'Importing {source.name}...', flush=True)
         # Let GoatCounter report parsing and submission results directly.
-        # Keep the receipt scope unchanged so existing receipts still apply.
-        import_args = [arg for arg in cli_args if arg != '-silent']
         try:
-            code = subprocess.run([binary, *import_args, str(snapshot)]).returncode
+            code = subprocess.run([binary, *cli_args, str(snapshot)]).returncode
         except OSError as e:
             print(f'Cannot run GoatCounter: {e}', file=sys.stderr)
             code = 1
@@ -173,8 +188,8 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
             save_ledger()
             print(f'GoatCounter exited {code} for {source.name}. Some hits may have been uploaded. Stopped; review the CLI output before retrying.', file=sys.stderr)
             raise SystemExit(code if code > 0 else 1)
-        record.update(status='complete',
+        record.update(status='complete', exit_code=0,
                       completed_at=dt.datetime.now(dt.timezone.utc).isoformat())
         save_ledger()
-        print(f'GoatCounter finished: {source.name}', flush=True)
-    print(f'Batch complete: {len(pending)} archives. Keep receipts at {ledger_file} to prevent repeat submissions.')
+        print(f'GoatCounter CLI exited 0: {source.name}. Check its output for rejected records.', flush=True)
+    print(f'Batch CLI runs finished: {len(pending)} files; dashboard receipt was not verified. Keep receipts at {ledger_file} to prevent repeat submissions.')
