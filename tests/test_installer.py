@@ -10,6 +10,7 @@ import pty
 import select
 from pathlib import Path
 import shlex
+import signal
 import stat
 import subprocess
 import tempfile
@@ -162,6 +163,44 @@ class InstallerTests(unittest.TestCase):
 
     def receipt(self):
         return next((self.state/'batches').glob('*/receipts.json'))
+
+    def test_stop_watcher_releases_lock_for_batch_and_can_repeat(self):
+        self.batch_fixture()
+        watcher = subprocess.Popen(['bash', '-c', self.harness+'watch_monitor blog-https'],
+                                   env=dict(self.env, GC_TEST_SLEEP='30'))
+        try:
+            for _ in range(100):
+                if (self.root/'arguments').exists():
+                    break
+                time.sleep(.02)
+            self.assertTrue((self.root/'arguments').exists())
+            result = subprocess.run(['bash', '-c', self.harness+'stop_monitor blog-https'],
+                                    env=self.env, text=True, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            self.assertIn('stopped', result.stdout)
+            self.assertIn('Cron may start it again', result.stdout)
+            self.assertEqual(watcher.wait(timeout=3), -signal.SIGTERM)
+            result = subprocess.run(['bash', '-c', self.harness+'stop_monitor blog-https'],
+                                    env=self.env, text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            self.assertIn('not running', result.stdout)
+            result = self.batch('--dry-run')
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        finally:
+            if watcher.poll() is None:
+                watcher.terminate()
+                watcher.wait(timeout=3)
+
+    def test_stop_leaves_non_watcher_lock_holder_running(self):
+        self.batch_fixture()
+        with (self.state/'blog-https.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = subprocess.run(['bash', '-c', self.harness+'stop_monitor blog-https'],
+                                    env=self.env, text=True, capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('no matching watcher', result.stderr)
+        result = self.batch('--dry-run')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
 
     def test_batch_preview_has_no_uploads_or_receipts(self):
         self.batch_fixture()
@@ -322,7 +361,7 @@ class InstallerTests(unittest.TestCase):
                 time.sleep(.02)
             result = self.batch('--yes')
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('Stop its watcher', result.stderr)
+            self.assertIn('goatcounter-log-monitor stop blog-https', result.stderr)
             self.assertFalse((self.root/'calls').exists())
         finally:
             first.wait(timeout=5)

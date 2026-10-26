@@ -32,6 +32,14 @@ watch_monitor() {
   exec "$BINARY" "${IMPORT_ARGS[@]}" -follow "$LOG_FILE"
 }
 
+stop_monitor() {
+  local id=${1:-}
+  load_monitor "$id"
+  need python3
+  mkdir -p "$STATE_DIR"
+  python3 "$PROJECT_ROOT/libexec/stop.py" "$STATE_DIR/$id.lock" "$id" "$BINARY" "$LOG_FILE" "$GOATCOUNTER_SITE"
+}
+
 batch_monitor() {
   local id=${1:-}
   shift || true
@@ -40,7 +48,7 @@ batch_monitor() {
   need flock
   mkdir -p "$STATE_DIR"
   exec 9>"$STATE_DIR/$id.lock"
-  flock -n 9 || die 'This monitor is running. Stop its watcher before a batch; cron starts are blocked while the batch holds this lock.'
+  flock -n 9 || die "This monitor is running. Run goatcounter-log-monitor stop $id before a batch; cron starts are blocked while the batch holds this lock."
   # Python handles archive discovery, private snapshots, and atomic receipts.
   # The existing CLI still parses each log and submits the actual pageviews.
   python3 "$PROJECT_ROOT/libexec/batch.py" "$STATE_DIR" "$id" "$LOG_FILE" "$GOATCOUNTER_SITE" "$BINARY" "${IMPORT_ARGS[@]}" -- "$@"

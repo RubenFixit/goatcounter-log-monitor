@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- Add `stop NAME` to terminate the matching watcher and wait for its monitor lock to be released. This also works with watchers started before this update; active batches are left running.
+- Point batch lock errors to the stop command. Stopping does not change cron jobs; a later cron invocation can restart the watcher.
+
 ## 0.2.2
 
 - Simplify batch imports: pass each archive to the GoatCounter CLI without local parser preflight or candidate validation.

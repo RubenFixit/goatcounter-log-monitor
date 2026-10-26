@@ -68,6 +68,14 @@ tail -n 50 ~/.local/state/goatcounter-log-monitor/example-https.log
 
 Replace `example-https` with your monitor name. Ctrl+C stops a foreground watcher. A held lock proves a process is running, not that uploads are succeeding; check the dashboard and diagnostics too.
 
+To stop a watcher from another session, including one started by cron:
+
+```bash
+~/.local/bin/goatcounter-log-monitor stop example-https
+```
+
+The command sends SIGTERM to the matching watcher and waits for its lock to be released. It also recognizes watchers started before this command was added. Running it again when stopped is harmless. It leaves active batches running. Cron remains enabled and can start the watcher again at its next scheduled check; run your batch after stopping, or disable that monitor's cron entry for a longer stop. Start it manually again with `watch example-https`, or let cron start it.
+
 For DreamHost, choose **panel** startup. Add each printed command in the hosting panel under the shell user owning the logs. Select every five minutes and enable locking. If selecting individual minutes, use `0,5,10,15,20,25,30,35,40,45,50,55`. Do not append `&`. Panel mode prints instructions without changing crontab or starting watchers immediately.
 
 Each watcher keeps running between checks. File locking prevents a duplicate invocation of the same monitor. After a watcher exits or the server reboots, a later cron check starts it again. The wizard saves the suggested entries here:
@@ -130,12 +138,13 @@ If the full filter count is zero, investigate the format/filters before another 
 
 ```text
 install.sh                    Interactive installation and update entry point
-bin/goatcounter-log-monitor    Runtime commands: watch, batch, status, version
+bin/goatcounter-log-monitor    Runtime commands: watch, stop, batch, inspect, status, version
 lib/common.sh                 Shared shell helpers
 lib/installer.sh              Configuration, CLI installation, cron setup
 lib/update.sh                 Safe source updates and launcher installation
-lib/monitor.sh                Watch/batch dispatch and status
+lib/monitor.sh                Runtime command dispatch and status
 libexec/batch.py               Archive selection, snapshots, receipts
+libexec/stop.py                Stop a matching watcher using its existing lock
 libexec/installer_helpers.py   Release metadata, URLs, version comparison, quoting
 libexec/inspect_log.py         Read-only parser/filter diagnostic command
 libexec/inspection.py          Isolated loopback API for local inspection
