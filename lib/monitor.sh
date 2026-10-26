@@ -5,11 +5,12 @@ load_monitor() {
   config="$CONFIG_DIR/$id.conf"
   [[ -f "$config" && ! -L "$config" && -O "$config" ]] || die "Missing or unsafe monitor configuration: $id"
   LOG_DATETIME=''
-  LOG_DEBUG=import-api
+  LOG_DEBUG=''
   source "$config"
   [[ -x "$BINARY" ]] || die 'Configured CLI is unavailable.'
   export GOATCOUNTER_API_KEY
   export GOATCOUNTER_SILENT=''
+  export GOATCOUNTER_DEBUG="$LOG_DEBUG"
   # v2.7.0 rejects -exclude=''. A regex that can never match disables the
   # CLI's implicit static/redirect exclusions without discarding any records.
   IMPORT_ARGS=(import -format="$LOG_FORMAT" -exclude='path:re:a^' -site="$GOATCOUNTER_SITE")

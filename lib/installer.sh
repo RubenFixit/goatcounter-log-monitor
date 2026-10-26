@@ -127,7 +127,7 @@ configure_monitor() {
     printf 'LOG_FILE=%q\n' "$log_path"
     printf 'LOG_FORMAT=%q\n' "$format"
     printf 'LOG_DATETIME=%q\n' "$datetime"
-    printf 'LOG_DEBUG=import-api\n'
+    printf 'LOG_DEBUG=\n'
   } > "$staged"
   chmod 600 "$staged"
   mv -- "$staged" "$CONFIG_DIR/$id.conf"

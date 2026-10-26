@@ -118,7 +118,7 @@ Batch includes a snapshot of the configured current log by default. It copies at
 
 All selected archives are snapshotted and gzip integrity is checked before uploading. Corrupt or changing archives stop the batch before uploads begin. Allow disk space roughly equal to the selected uncompressed archives. The monitor lock blocks cron starts of that same monitor during a batch; another running watcher makes the batch refuse to start. A destination/filter-scope lock prevents concurrent batches sharing receipts.
 
-Batch passes each selected file to the GoatCounter CLI, decompressing `.gz` files into temporary plain files first. It does not preflight, parse, or rewrite log entries. Neither watch nor batch excludes GETs, HEADs, redirects, static files, or non-200 responses. To disable GoatCounter v2.7.0's default static/redirect exclusions, both pass `-exclude=path:re:a^`, an expression that can never match; this release rejects the documented empty exclusion. The server can still classify bots or reject invalid records. CLI output and errors appear directly in the terminal for batch and in the private monitor log for watch. API request debugging is enabled by default.
+Batch passes each selected file to the GoatCounter CLI, decompressing `.gz` files into temporary plain files first. It does not preflight, parse, or rewrite log entries. Neither watch nor batch excludes GETs, HEADs, redirects, static files, or non-200 responses. To disable GoatCounter v2.7.0's default static/redirect exclusions, both pass `-exclude=path:re:a^`, an expression that can never match; this release rejects the documented empty exclusion. The server can still classify bots or reject invalid records. CLI output and errors appear directly in the terminal for batch and in the private monitor log for watch. Debug logging is off by default.
 
 SHA-256 receipts under `~/.local/state/goatcounter-log-monitor/batches/` skip completed identical payloads, including plain/gzip copies. Changed dated archives are rejected rather than replayed. Keep the receipts: deleting them, changing destination or CLI arguments, or moving to an unrelated state directory can defeat repeat-import protection. These are **file-level receipts, not event-level deduplication**; distinct files can still contain overlapping requests. Existing receipts are retained. Version 0.2.4 changes the CLI arguments and therefore uses a new receipt scope; previous imports are not automatically skipped under the new settings.
 
@@ -135,10 +135,10 @@ The installer accepts a native log-format name or `custom`. For DreamHost combin
 ```bash
 LOG_FORMAT='log:$remote_addr $ignore [$datetime] "$method $path $http" $status $size "$referrer" "$user_agent"$ignore'
 LOG_DATETIME='02/Jan/2006:15:04:05 -0700'
-LOG_DEBUG=import-api
+LOG_DEBUG=
 ```
 
-The settings are passed unchanged to the CLI. `LOG_DATETIME` defaults to empty for native predefined formats. `LOG_DEBUG` defaults to `import-api`; set it to an empty string to disable debug messages while retaining normal CLI errors. Silent mode is disabled in both watch and batch. Stop and restart an existing watcher to apply new settings.
+The settings are passed unchanged to the CLI. `LOG_DATETIME` defaults to empty for native predefined formats. `LOG_DEBUG` defaults to empty; explicitly set `LOG_DEBUG=import-api` when troubleshooting. Normal CLI errors remain visible with debugging off, and changing debug settings does not change batch receipt identity. Silent mode is disabled in both watch and batch. Stop and restart an existing watcher to apply new settings. Earlier installers saved `LOG_DEBUG=import-api` explicitly; clear that setting in existing configurations to turn debugging off. Updates preserve saved settings and do not change running processes.
 
 ## Troubleshoot a batch with no dashboard data
 

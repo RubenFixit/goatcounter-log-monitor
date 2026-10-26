@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.6
+
+- Disable debug logging by default in the runtime and new monitor configurations. `LOG_DEBUG=import-api` remains an explicit troubleshooting option; normal CLI errors remain visible.
+- Keep debug changes from changing batch receipt identity, preserving receipt identity from earlier debug-enabled defaults.
+- Existing saved `LOG_DEBUG=import-api` settings must be cleared to disable debugging; running processes retain their loaded settings.
+
 ## 0.2.5
 
 - Include the current access log in every batch by default and remove `--include-current`. Date bounds use today's server date to select the current file; it is uploaded after matching archives.

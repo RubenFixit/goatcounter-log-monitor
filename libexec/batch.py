@@ -31,7 +31,11 @@ if not active.is_absolute() or not active.parent.is_dir():
     raise SystemExit('The configured log directory is unavailable.')
 # The ledger is shared across monitors targeting the same site and CLI arguments.
 # Different binary paths do not create a fresh duplicate-import scope.
-scope = hashlib.sha256(json.dumps([site, cli_args], separators=(',', ':')).encode()).hexdigest()
+# Older defaults included this debug argument in the receipt identity. Keep
+# that identity when logging is disabled or changed; it does not change hits.
+receipt_args = [arg for arg in cli_args if not arg.startswith('-debug=')]
+receipt_args.append('-debug=import-api')
+scope = hashlib.sha256(json.dumps([site, receipt_args], separators=(',', ':')).encode()).hexdigest()
 receipt_dir = state / 'batches' / scope
 receipt_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 scope_lock = open(receipt_dir / 'lock', 'a')

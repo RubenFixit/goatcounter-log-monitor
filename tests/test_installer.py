@@ -180,7 +180,7 @@ class InstallerTests(unittest.TestCase):
         args = (self.root/'arguments').read_bytes().split(b'\0')
         self.assertIn(os.fsencode('-format='+CUSTOM_FORMAT), args)
         self.assertIn(b'-datetime=02/Jan/2006:15:04:05 -0700', args)
-        self.assertIn(b'-debug=import-api', args)
+        self.assertFalse(any(arg.startswith(b'-debug=') for arg in args))
         self.assertEqual([arg for arg in args if arg.startswith(b'-exclude=')], [b'-exclude=path:re:a^'])
         self.assertNotIn(b'-silent', args)
 
@@ -194,6 +194,24 @@ class InstallerTests(unittest.TestCase):
         result = self.batch('--yes')
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertEqual((self.root/'calls').read_text().count('call'), 4)
+
+    def test_debug_is_opt_in_and_does_not_change_batch_receipts(self):
+        self.batch_fixture()
+        config = self.config/'blog-https.conf'
+        with config.open('a') as f:
+            f.write('\nLOG_DEBUG=import-api\n')
+        result = self.batch('--yes')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        args = (self.root/'arguments').read_bytes().split(b'\0')
+        self.assertIn(b'-debug=import-api', args)
+        original_receipts = self.receipt().read_bytes()
+        with config.open('a') as f:
+            f.write('LOG_DEBUG=\n')
+        result = self.batch('--yes', dict(self.env, GOATCOUNTER_DEBUG='all'))
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('Nothing new', result.stdout)
+        self.assertEqual((self.root/'calls').read_text().count('call'), 3)
+        self.assertEqual(self.receipt().read_bytes(), original_receipts)
 
     def test_batch_current_only_works_without_archives(self):
         result = self.wizard(self.inputs())
@@ -467,7 +485,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual([hit['path'] for hit in received], expected_paths)
             self.assertTrue(all(not hit['created_at'].startswith('0001-') for hit in received))
             self.assertIn('GoatCounter CLI exited 0', result.stdout)
-            self.assertIn('DEBUG import-api', result.stderr+result.stdout)
+            self.assertNotIn('DEBUG import-api', result.stderr+result.stdout)
             self.assertTrue(all(v['status']=='complete' for v in json.loads(self.receipt().read_text()).values()))
             again = self.batch('--yes')
             self.assertEqual(again.returncode, 0, again.stdout+again.stderr)
