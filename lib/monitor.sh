@@ -45,6 +45,16 @@ batch_monitor() {
   # The existing CLI still parses each log and submits the actual pageviews.
   python3 "$PROJECT_ROOT/libexec/batch.py" "$STATE_DIR" "$id" "$LOG_FILE" "$GOATCOUNTER_SITE" "$BINARY" "${IMPORT_ARGS[@]}" -- "$@"
 }
+inspect_monitor() {
+  local id=${1:-}
+  shift || true
+  load_monitor "$id"
+  need python3
+  mkdir -p "$STATE_DIR"
+  GOATCOUNTER_API_KEY=goatcounter-offline-inspection python3 "$PROJECT_ROOT/libexec/inspect_log.py" \
+    "$STATE_DIR" "$id" "$LOG_FILE" "$LOG_FORMAT" "$BINARY" "${IMPORT_ARGS[@]}" -- "$@"
+}
+
 show_status() {
   local config id
   need flock

@@ -1,17 +1,41 @@
-#!/bin/bash
-set -eu
-case "$1" in
-  version) echo 'GoatCounter v2.7.0 (test fixture)' ;;
-  import)
-    printf '%s\0' "$@" > "$GC_TEST_CAPTURE"
-    [[ -n "$GOATCOUNTER_API_KEY" ]] || exit 9
-    if [[ " $* " != *' -follow '* ]]; then
-      printf 'call\n' >> "$GC_TEST_CALLS"
-      cat "${!#}" >> "$GC_TEST_CONTENTS"
-      [[ "${GC_TEST_DIAGNOSTIC:-0}" == 0 ]] || echo 'simulated partial upload warning' >&2
-      [[ "${GC_TEST_FAIL:-0}" == 0 ]] || exit 7
-    fi
-    sleep "${GC_TEST_SLEEP:-0}"
-    ;;
-  *) exit 8 ;;
-esac
+#!/usr/bin/env python3
+"""Fake official CLI for offline integration tests; only talks to loopback."""
+import json
+import os
+from pathlib import Path
+import sys
+import time
+from urllib.request import Request, urlopen
+
+args = sys.argv[1:]
+if args[0] == 'version':
+    print('GoatCounter v2.7.0 (test fixture)')
+    raise SystemExit(0)
+if args[0] != 'import':
+    raise SystemExit(8)
+if not os.environ.get('GOATCOUNTER_API_KEY'):
+    raise SystemExit(9)
+if os.environ['GOATCOUNTER_API_KEY'] == 'goatcounter-offline-inspection':
+    site = next(arg.split('=', 1)[1] for arg in args if arg.startswith('-site='))
+    assert site.startswith('http://127.0.0.1:')
+    lines = Path(args[-1]).read_text().splitlines()
+    hits = [] if os.environ.get('GC_TEST_INSPECT_ZERO') else [
+        {'path': '/synthetic-inspection', 'created_at': '2026-10-19T10:00:00Z', 'user_agent': 'Fixture browser'}
+        for line in lines if line]
+    if hits:
+        request = Request(site+'/api/v0/count', data=json.dumps({'hits': hits}).encode(),
+                          headers={'Content-Type': 'application/json'})
+        with urlopen(request) as response:
+            assert response.status == 202
+else:
+    Path(os.environ['GC_TEST_CAPTURE']).write_bytes(b'\0'.join(os.fsencode(arg) for arg in args)+b'\0')
+    if '-follow' not in args:
+        with open(os.environ['GC_TEST_CALLS'], 'a') as f:
+            f.write('call\n')
+        with open(os.environ['GC_TEST_CONTENTS'], 'ab') as f:
+            f.write(Path(args[-1]).read_bytes())
+        if os.environ.get('GC_TEST_DIAGNOSTIC', '0') != '0':
+            print('simulated partial upload warning', file=sys.stderr)
+        if os.environ.get('GC_TEST_FAIL', '0') != '0':
+            raise SystemExit(7)
+    time.sleep(float(os.environ.get('GC_TEST_SLEEP', 0)))

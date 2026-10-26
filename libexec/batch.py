@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 
+from inspection import inspect_log
+
 state, monitor, active, site, binary = sys.argv[1:6]
 separator = sys.argv.index('--', 6)
 cli_args = sys.argv[6:separator]
@@ -132,8 +134,17 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
             continue
         if previous:
             raise SystemExit(f'Previous import of {source.name} is {previous["status"]}; refusing automatic retry because some hits may already exist. Review {ledger_file}.')
-        print(f'Will import: {source.name} ({snapshot.stat().st_size} uncompressed bytes)')
-        pending.append((source, snapshot, identity))
+        diagnostic = Path(temp)/f'preflight-{len(pending)}.log'
+        preflight = inspect_log(binary, cli_args, snapshot, diagnostic)
+        if preflight['exit_code'] != 0 or preflight['diagnostic_bytes'] or preflight['invalid_candidates']:
+            retained = state/f'{monitor}.batch-preflight.log'
+            with open(retained, 'wb') as dst:
+                dst.write(diagnostic.read_bytes())
+            raise SystemExit(f'Local parser preflight was not clean for {source.name}; no batch uploads performed. Private details: {retained}. Run inspect for format/filter diagnostics.')
+        if preflight['rows'] == 0:
+            raise SystemExit(f'Zero eligible records in {source.name}: the format or filters produced no pageviews. No receipts or batch uploads written. Run inspect for diagnostics.')
+        print(f'Will submit: {source.name} ({snapshot.stat().st_size} uncompressed bytes; {preflight["rows"]} eligible records)')
+        pending.append((source, snapshot, identity, preflight['rows']))
     if not pending:
         print('Nothing new to upload.')
         raise SystemExit(0)
@@ -141,8 +152,8 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
         print(f'Dry run: {len(pending)} unique archives; no uploads and no receipts written.')
         raise SystemExit(0)
     if not args.yes:
-        # Python source occupies stdin via heredoc; use the terminal for the
-        # explicit irreversible-upload confirmation rather than consuming it.
+        # Use the terminal for explicit upload confirmation, including when
+        # stdin belongs to a caller or a pipeline.
         try:
             with open('/dev/tty', 'r') as reader, open('/dev/tty', 'w') as writer:
                 writer.write(f'Type IMPORT to upload {len(pending)} archives to {site}: ')
@@ -153,7 +164,7 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
         if confirmation != 'IMPORT':
             print('Cancelled; nothing uploaded.')
             raise SystemExit(0)
-    for source, snapshot, identity in pending:
+    for source, snapshot, identity, eligible_rows in pending:
         record = {'status': 'in-progress', 'source': str(source), 'site': site,
                   'sha256': identity, 'started_at': dt.datetime.now(dt.timezone.utc).isoformat()}
         record['logical_source'] = str(source)[:-3] if source.name.endswith('.gz') else str(source)
@@ -175,7 +186,8 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
             record.update(status='uncertain', exit_code=code, diagnostic_log=str(log_path))
             save_ledger()
             raise SystemExit(f'Import of {source.name} was not cleanly confirmed. Some hits may have been uploaded. Stopped to avoid automatic duplicates; inspect {log_path}.')
-        record.update(status='complete', completed_at=dt.datetime.now(dt.timezone.utc).isoformat())
+        record.update(status='complete', eligible_rows=eligible_rows, dashboard_verified=False,
+                      completed_at=dt.datetime.now(dt.timezone.utc).isoformat())
         save_ledger()
-        print(f'Completed: {source.name}')
+        print(f'CLI submission finished: {source.name} ({eligible_rows} eligible records; dashboard count not verified)')
     print(f'Batch complete: {len(pending)} archives. Keep receipts at {ledger_file} to prevent repeat submissions.')

@@ -158,7 +158,7 @@ class InstallerTests(unittest.TestCase):
     def batch(self, flags='', env=None):
         return subprocess.run(['bash', '-c', self.harness+'batch_monitor blog-https '+flags],
                               text=True, capture_output=True, env=env or self.env,
-                              cwd=self.root, timeout=10)
+                              cwd=self.root, timeout=30)
 
     def receipt(self):
         return next((self.state/'batches').glob('*/receipts.json'))
@@ -185,7 +185,7 @@ class InstallerTests(unittest.TestCase):
         output = b''
         answered = False
         try:
-            deadline = time.monotonic()+10
+            deadline = time.monotonic()+30
             while time.monotonic()<deadline:
                 ready, _, _ = select.select([master], [], [], .1)
                 if ready:
@@ -272,6 +272,41 @@ class InstallerTests(unittest.TestCase):
         result = self.batch('--yes')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Nothing from this batch was uploaded', result.stderr)
+        self.assertFalse((self.root/'calls').exists())
+
+    def test_batch_zero_eligible_records_does_not_create_success_receipts(self):
+        self.batch_fixture()
+        result = self.batch('--yes', dict(self.env, GC_TEST_INSPECT_ZERO='1'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Zero eligible records', result.stderr)
+        self.assertFalse((self.root/'calls').exists())
+        self.assertEqual(list((self.state/'batches').glob('*/receipts.json')), [])
+
+    def test_inspect_never_uses_destination_or_real_token(self):
+        self.batch_fixture()
+        result = subprocess.run(['bash', '-c', self.harness+'inspect_monitor blog-https'],
+                                env=self.env, cwd=self.root, text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('Read-only inspection', result.stdout)
+        self.assertIn('Configured import filters: 1 candidate', result.stdout)
+        self.assertNotIn(self.token, result.stdout+result.stderr)
+        self.assertFalse((self.root/'calls').exists())
+        self.assertFalse((self.state/'batches').exists())
+
+    @unittest.skipUnless(os.environ.get('GC_REAL_CLI'), 'Set GC_REAL_CLI for native CLI format/filter inspection.')
+    def test_inspect_actual_cli_combined_http2_filters_and_bot_hints(self):
+        self.batch_fixture()
+        self.log.write_bytes((Path(__file__).with_name('fixtures')/'apache-http2.log').read_bytes())
+        with (self.config/'blog-https.conf').open('a') as config:
+            config.write('\nBINARY='+shlex.quote(os.environ['GC_REAL_CLI'])+'\n')
+        result = subprocess.run(['bash', '-c', self.harness+'inspect_monitor blog-https'],
+                                env=self.env, cwd=self.root, text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('Format only (no exclusions): 7 candidate records', result.stdout)
+        self.assertIn('GET requests only: 6 candidate records', result.stdout)
+        self.assertIn('HTTP 200 only: 5 candidate records', result.stdout)
+        self.assertIn('Configured import filters: 3 candidate records', result.stdout)
+        self.assertIn('User-Agent hints among eligible records: 2/3', result.stdout)
         self.assertFalse((self.root/'calls').exists())
 
     def test_batch_refuses_running_watcher(self):

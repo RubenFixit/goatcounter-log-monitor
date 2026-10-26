@@ -1,0 +1,7 @@
+203.0.113.1 - - [25/Oct/2026:00:28:59 -0700] "GET /tag/example HTTP/2.0" 301 400 "https://example.test" "Mozilla/5.0"
+203.0.113.2 - - [25/Oct/2026:00:29:03 -0700] "GET /tag/example/ HTTP/2.0" 200 41998 "https://example.test/tag/example" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+203.0.113.3 - - [25/Oct/2026:00:29:11 -0700] "HEAD / HTTP/2.0" 200 162 "https://example.test/" "DreamHost SiteMonitor 1.0"
+2001:db8::1 - - [25/Oct/2026:00:31:46 -0700] "GET / HTTP/2.0" 200 46524 "-" "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+203.0.113.4 - - [25/Oct/2026:00:32:14 -0700] "GET /tag/audio/ HTTP/2.0" 200 41520 "-" "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)"
+203.0.113.5 - - [25/Oct/2026:00:32:58 -0700] "GET /.git/config HTTP/2.0" 429 350 "-" "Gulper Web Bot 0.2.4"
+203.0.113.6 - - [25/Oct/2026:00:33:14 -0700] "GET /_assets/app.js HTTP/2.0" 200 409 "-" "Mozilla/5.0"

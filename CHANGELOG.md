@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Add `inspect NAME [--file PATH]`: exercise the CLI parser against a temporary loopback API with a synthetic key, report format/filter counts and bot User-Agent hints, and discard records without contacting the real site or changing receipts.
+- Preflight new batch archives locally and reject zero-record or invalid parses before writing success receipts or uploading any archive in that batch.
+- Record eligible-row counts and distinguish a quiet CLI submission from verified dashboard data. Existing receipts remain unchanged and do not prove rows were submitted or counted.
+- Verify combined Apache HTTP/2 logs with anonymized IPv4/IPv6, redirects, successful GETs, HEAD checks, assets, bot signatures, and rate-limited responses using the real CLI.
+
 ## 0.2.0
 
 - Move the standalone gist utility into a repository with separate installer, monitor, shell libraries, Python helpers, and test fixtures.

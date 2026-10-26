@@ -101,13 +101,30 @@ For `access.log`, discovery includes `access.log.2026-10-24`, `access.log.2026-1
 
 All selected archives are snapshotted and gzip integrity is checked before uploading. Corrupt or changing archives stop the batch before uploads begin. Allow disk space roughly equal to the selected uncompressed archives. The monitor lock blocks cron starts of that same monitor during a batch; another running watcher makes the batch refuse to start. A destination/filter-scope lock prevents concurrent batches sharing receipts.
 
-SHA-256 receipts under `~/.local/state/goatcounter-log-monitor/batches/` skip completed identical payloads, including plain/gzip copies. Changed dated archives are rejected rather than replayed. Keep the receipts: deleting them, changing destination/filter settings, or moving to an unrelated state directory can defeat repeat-import protection. These are **file-level receipts, not event-level deduplication**; distinct archives can still contain overlapping requests.
+New archives are also parsed by the exact CLI against an isolated local test API before any real upload. This uses a synthetic token and a loopback destination, not the configured credentials. Zero eligible records, malformed candidates, or parser diagnostics stop the batch with no new receipts or uploads. The preview reports candidate counts. This adds local processing time and requires a temporary loopback listening socket; it does not verify GoatCounter's server-side bot filtering or database persistence.
+
+SHA-256 receipts under `~/.local/state/goatcounter-log-monitor/batches/` skip completed identical payloads, including plain/gzip copies. Changed dated archives are rejected rather than replayed. Keep the receipts: deleting them, changing destination/filter settings, or moving to an unrelated state directory can defeat repeat-import protection. These are **file-level receipts, not event-level deduplication**; distinct archives can still contain overlapping requests. Since 0.2.1, receipts include eligible-row counts and `dashboard_verified: false`; older `complete` receipts may represent zero eligible rows.
 
 Receipts cannot recognize earlier watcher traffic, JavaScript submissions, or imports performed with another tool. **Choose a `--before` boundary that excludes previously collected dates, or use a fresh analytics site.** Stopping a watcher does not remove its past submissions.
 
 Receipts are marked `in-progress` before submission, then `complete` only after a zero CLI exit with no diagnostics in silent mode. The CLI can report individual API failures while returning zero, so any output is treated conservatively. An interruption or unsuccessful/uncertain result prevents automatic retries; review the private diagnostic path printed by the command before deciding what to resubmit. There is no rollback or exactly-once guarantee. Deleting an uncertain receipt and rerunning may duplicate accepted hits.
 
 `--dry-run` sends no pageviews and writes no receipts, although it uses locks and temporary snapshots. `--yes` skips only interactive confirmation, not locks or uncertain-receipt checks. The active log is intentionally excluded because repeatedly uploading a growing file would replay its old prefix. This utility does not automatically bridge the end of batch history into live collection or recover gaps.
+
+## Troubleshoot a batch with no dashboard data
+
+Imported records keep their original timestamps: check the archive's date range, not only today's dashboard. A clean CLI exit or a receipt marked `complete` does not prove that GoatCounter displayed visits; records might have been excluded locally or accepted and then classified as bots by the server. Do not delete receipts and replay a batch just because the dashboard is empty.
+
+Inspect an archive that was already uploaded without resubmitting it:
+
+```bash
+~/.local/bin/goatcounter-log-monitor inspect example-https \
+  --file "$HOME/logs/example.com/https/access.log.2026-10-25"
+```
+
+Omit `--file` to inspect a bounded snapshot of the configured active log, or select a `.gz` archive. Inspection does not acquire the watcher lock or change batch receipts. It substitutes a synthetic key and local API, then reports candidate counts for format-only, GET-only, HTTP-200-only, and all configured filters. It also reports the candidate date span and a heuristic count of common bot User-Agent signatures. It does not print request URLs, IPs, or raw User-Agent values. CLI diagnostics, if present, are retained only in private state files; those files may contain log details and should not be posted unredacted.
+
+If the full filter count is zero, investigate the format/filters before another upload. If candidates are present, check dates and bot hints and investigate server-side processing. Bot hints are not GoatCounter's own classification; inspection cannot query the real dashboard and needs no extra API permission. `combined` supports complete Apache entries with `HTTP/2.0`, IPv4, and IPv6; truncated or differently formatted lines can fail parsing.
 
 ## Files and privacy
 
@@ -120,6 +137,8 @@ lib/update.sh                 Safe source updates and launcher installation
 lib/monitor.sh                Watch/batch dispatch and status
 libexec/batch.py               Archive selection, snapshots, receipts
 libexec/installer_helpers.py   Release metadata, URLs, version comparison, quoting
+libexec/inspect_log.py         Read-only parser/filter diagnostic command
+libexec/inspection.py          Isolated loopback API for local inspection
 tests/                        Linux integration tests and ordinary fixture files
 ```
 
