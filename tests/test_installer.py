@@ -252,7 +252,7 @@ class InstallerTests(unittest.TestCase):
     def test_batch_failure_is_uncertain_and_never_automatically_retried(self):
         self.batch_fixture()
         result = self.batch('--yes', dict(self.env, GC_TEST_FAIL='1'))
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 7)
         self.assertIn('Some hits may have been uploaded', result.stderr)
         self.assertEqual(next(iter(json.loads(self.receipt().read_text()).values()))['status'], 'uncertain')
         again = self.batch('--yes')
@@ -260,11 +260,14 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('refusing automatic retry', again.stderr)
         self.assertEqual((self.root/'calls').read_text().count('call'), 1)
 
-    def test_batch_zero_exit_with_diagnostics_is_not_assumed_success(self):
+    def test_batch_shows_cli_output_and_accepts_zero_exit(self):
         self.batch_fixture()
         result = self.batch('--yes', dict(self.env, GC_TEST_DIAGNOSTIC='1'))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(next(iter(json.loads(self.receipt().read_text()).values()))['status'], 'uncertain')
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn('simulated partial upload warning', result.stderr)
+        self.assertEqual((self.root/'calls').read_text().count('call'), 3)
+        self.assertTrue(all(v['status']=='complete' for v in json.loads(self.receipt().read_text()).values()))
+        self.assertNotIn(b'-silent', (self.root/'arguments').read_bytes().split(b'\0'))
 
     def test_batch_corrupt_gzip_fails_before_any_upload(self):
         self.batch_fixture()
@@ -274,13 +277,13 @@ class InstallerTests(unittest.TestCase):
         self.assertIn('Nothing from this batch was uploaded', result.stderr)
         self.assertFalse((self.root/'calls').exists())
 
-    def test_batch_zero_eligible_records_does_not_create_success_receipts(self):
+    def test_batch_passes_archives_without_local_parser_preflight(self):
         self.batch_fixture()
         result = self.batch('--yes', dict(self.env, GC_TEST_INSPECT_ZERO='1'))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Zero eligible records', result.stderr)
-        self.assertFalse((self.root/'calls').exists())
-        self.assertEqual(list((self.state/'batches').glob('*/receipts.json')), [])
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertEqual((self.root/'calls').read_text().count('call'), 3)
+        self.assertEqual((self.root/'contents').read_bytes(), b'older\nprevious\nyesterday\n')
+        self.assertNotIn('eligible records', result.stdout)
 
     def test_inspect_never_uses_destination_or_real_token(self):
         self.batch_fixture()

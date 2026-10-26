@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Simplify batch imports: pass each archive to the GoatCounter CLI without local parser preflight or candidate validation.
+- Show GoatCounter's normal output and errors directly, and use its exit status to determine completion. Preserve existing archive selection, gzip handling, locks, and repeat-import receipts.
+- Keep `inspect` as an optional diagnostic command; batch imports no longer invoke it automatically.
+
 ## 0.2.1
 
 - Add `inspect NAME [--file PATH]`: exercise the CLI parser against a temporary loopback API with a synthetic key, report format/filter counts and bot User-Agent hints, and discard records without contacting the real site or changing receipts.

@@ -13,8 +13,6 @@ import subprocess
 import sys
 import tempfile
 
-from inspection import inspect_log
-
 state, monitor, active, site, binary = sys.argv[1:6]
 separator = sys.argv.index('--', 6)
 cli_args = sys.argv[6:separator]
@@ -134,17 +132,8 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
             continue
         if previous:
             raise SystemExit(f'Previous import of {source.name} is {previous["status"]}; refusing automatic retry because some hits may already exist. Review {ledger_file}.')
-        diagnostic = Path(temp)/f'preflight-{len(pending)}.log'
-        preflight = inspect_log(binary, cli_args, snapshot, diagnostic)
-        if preflight['exit_code'] != 0 or preflight['diagnostic_bytes'] or preflight['invalid_candidates']:
-            retained = state/f'{monitor}.batch-preflight.log'
-            with open(retained, 'wb') as dst:
-                dst.write(diagnostic.read_bytes())
-            raise SystemExit(f'Local parser preflight was not clean for {source.name}; no batch uploads performed. Private details: {retained}. Run inspect for format/filter diagnostics.')
-        if preflight['rows'] == 0:
-            raise SystemExit(f'Zero eligible records in {source.name}: the format or filters produced no pageviews. No receipts or batch uploads written. Run inspect for diagnostics.')
-        print(f'Will submit: {source.name} ({snapshot.stat().st_size} uncompressed bytes; {preflight["rows"]} eligible records)')
-        pending.append((source, snapshot, identity, preflight['rows']))
+        print(f'Will import: {source.name} ({snapshot.stat().st_size} uncompressed bytes)')
+        pending.append((source, snapshot, identity))
     if not pending:
         print('Nothing new to upload.')
         raise SystemExit(0)
@@ -164,30 +153,28 @@ with tempfile.TemporaryDirectory(prefix='.batch-', dir=state) as temp:
         if confirmation != 'IMPORT':
             print('Cancelled; nothing uploaded.')
             raise SystemExit(0)
-    for source, snapshot, identity, eligible_rows in pending:
+    for source, snapshot, identity in pending:
         record = {'status': 'in-progress', 'source': str(source), 'site': site,
                   'sha256': identity, 'started_at': dt.datetime.now(dt.timezone.utc).isoformat()}
         record['logical_source'] = str(source)[:-3] if source.name.endswith('.gz') else str(source)
         ledger[identity] = record
         save_ledger()
-        log_path = receipt_dir / f'{identity}.log'
         print(f'Importing {source.name}...', flush=True)
-        # -silent normally produces no output on success. The CLI can log
-        # individual rejected batches while exiting zero, so any diagnostic
-        # output is conservatively treated as an uncertain partial import.
-        with open(log_path, 'wb') as diagnostics:
-            try:
-                result = subprocess.run([binary, *cli_args, str(snapshot)], stdout=diagnostics, stderr=subprocess.STDOUT)
-                code = result.returncode
-            except OSError as e:
-                diagnostics.write(str(e).encode())
-                code = -1
-        if code != 0 or log_path.stat().st_size != 0:
-            record.update(status='uncertain', exit_code=code, diagnostic_log=str(log_path))
+        # Let GoatCounter report parsing and submission results directly.
+        # Keep the receipt scope unchanged so existing receipts still apply.
+        import_args = [arg for arg in cli_args if arg != '-silent']
+        try:
+            code = subprocess.run([binary, *import_args, str(snapshot)]).returncode
+        except OSError as e:
+            print(f'Cannot run GoatCounter: {e}', file=sys.stderr)
+            code = 1
+        if code != 0:
+            record.update(status='uncertain', exit_code=code)
             save_ledger()
-            raise SystemExit(f'Import of {source.name} was not cleanly confirmed. Some hits may have been uploaded. Stopped to avoid automatic duplicates; inspect {log_path}.')
-        record.update(status='complete', eligible_rows=eligible_rows, dashboard_verified=False,
+            print(f'GoatCounter exited {code} for {source.name}. Some hits may have been uploaded. Stopped; review the CLI output before retrying.', file=sys.stderr)
+            raise SystemExit(code if code > 0 else 1)
+        record.update(status='complete',
                       completed_at=dt.datetime.now(dt.timezone.utc).isoformat())
         save_ledger()
-        print(f'CLI submission finished: {source.name} ({eligible_rows} eligible records; dashboard count not verified)')
+        print(f'GoatCounter finished: {source.name}', flush=True)
     print(f'Batch complete: {len(pending)} archives. Keep receipts at {ledger_file} to prevent repeat submissions.')
